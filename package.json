@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "renkon-codemirror": "^0.10.6"
+  }
+}
