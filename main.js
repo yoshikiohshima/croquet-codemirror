@@ -1,6 +1,7 @@
 import {CodeMirror, CodeMirrorModel, CodeMirrorView} from "./croquet-codemirror.js";
 
 window.CodeMirror = CodeMirror;
+const {ChangeSet} = CodeMirror.state;
 
 const apiKey = "234567_Paste_Your_Own_API_Key_Here_7654321";
 const box = "http://localhost:8888";
@@ -24,8 +25,31 @@ class TopView extends Croquet.View {
   constructor(model) {
     super(model);
     this.model = model;
-    this.editor = new CodeMirrorView(this.model.editor);
-    document.body.appendChild(this.editor.editor.dom);
+    this.editor1 = new CodeMirrorView(this.model.editor);
+    this.editor1.view.dom.id = "e1";
+    document.body.appendChild(this.editor1.view.dom);
+
+    this.editor2 = new CodeMirrorView(this.model.editor);
+    this.editor2.view.dom.id = "e2";
+    document.body.appendChild(this.editor2.view.dom);
+
+    window.topView = this;
+
+    this.testButton = document.createElement("button");
+    this.testButton.id = "test-button";
+    this.testButton.textContent = "test";
+    document.body.appendChild(this.testButton);
+    this.testButton.addEventListener("click", () => {
+      this.insertText(this.editor1.view, "1");
+      this.insertText(this.editor2.view, "2");
+    });
+  }
+
+  insertText(view, text) {
+    const {state} = view;
+    const range = state.selection.main;
+    const changes = ChangeSet.of([{from: range.from, to: range.to, insert: text}], state.doc.length);
+    view.dispatch({changes});
   }
 }
 
