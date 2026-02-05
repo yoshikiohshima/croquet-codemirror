@@ -1,5 +1,7 @@
 {
-  "dependencies": {
-    "renkon-codemirror": "^0.10.6"
-  }
+  "name": "croquet-codemirror",
+  "version": "0.10.6",
+  "type": "module",
+  "license": "MIT",
+  "main": "croquet-codemirror.js"
 }

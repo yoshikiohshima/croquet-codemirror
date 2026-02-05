@@ -4,8 +4,6 @@
 // the model sequences them, meaning that a change can have a different basis.
 // then we rebase the off base one and incorporate into the Authority and publish
 
-
-
 import {CodeMirror} from "./renkon-codemirror.js";
 export {CodeMirror} from "./renkon-codemirror.js";
 
@@ -56,7 +54,14 @@ class UpdatesWrapper {
 
 export class CodeMirrorModel extends Croquet.Model {
   init(options) {
-    this.doc = new TextWrapper(Text.of(options.doc || ["hello"]));
+    let doc = options.doc;
+    if (typeof doc === "string") {
+      doc = [doc];
+    } else if (typeof doc === "undefined") {
+      doc = ["hello"];
+    }
+
+    this.doc = new TextWrapper(Text.of(doc));
     this.updates = new UpdatesWrapper(0, []);
     this.pending = [];
     this.subscribe(this.id, "collabMessage", this.collabMessage);
@@ -159,6 +164,7 @@ export class CodeMirrorView extends Croquet.View {
     this.pushPromise = null;
     this.done = false;
     this.pull();
+    this.editor = this.view;
     // console.log(getClientID(this.view.state));
   }
 
@@ -247,6 +253,11 @@ export class CodeMirrorView extends Croquet.View {
   destroy() {
     super.destroy();
     this.done = true;
+  }
+
+  static create(Renkon, model, extensions) {
+    const view = new this(Renkon.app.model.getModel(model.id), extensions);
+    return view;
   }
 }
 
