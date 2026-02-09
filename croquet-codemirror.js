@@ -72,7 +72,6 @@ class UpdatesWrapper {
   }
 
   clientExit(viewId, clientID) {
-    const clientIDs = this.clientIDs.get(viewId);
     this.clientIDs.delete(viewId);
     this.versions.delete(clientID);
     this.setLowest();
@@ -261,7 +260,7 @@ export class CodeMirrorView extends Croquet.View {
     if (this.pushPromise || updates.length === 0) return
     let version = getSyncedVersion(this.view.state);
     // console.log("actually push", getClientID(this.view.state));
-    const pushResult = await this.sendPushUpdates(version, updates);
+    const pushResult = this.sendPushUpdates(version, updates);
     await pushResult;
     // console.log("push done", pushResult);
     // Regardless of whether the push failed or new updates came in
@@ -271,14 +270,13 @@ export class CodeMirrorView extends Croquet.View {
     }
   }
 
-  // The peer has to send the "version" to say where it is.
-  // the client should get updates after that
-
   async pull() {
     while (!this.done) {
       let version = getSyncedVersion(this.view.state);
-      let pullResult = await this.sendPullUpdates(version);
+      let pullResult = this.sendPullUpdates(version);
+      // console.log("pullResult", pullResult);
       let updateInfo = await pullResult;
+      // console.log("updateInfo", updateInfo);
       const updates = this.model.updates.slice(updateInfo.start, updateInfo.end);
       this.view.dispatch(receiveUpdates(this.view.state, updates));
     }
