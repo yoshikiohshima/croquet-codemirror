@@ -173,6 +173,7 @@ export class CodeMirrorModel extends Croquet.Model {
     } else if (type === "getDocument") {
       this.publish(this.id, "collabUpdate", {type: "getDocument"});
     } else if (type === "destroy") {
+      console.log("destroy", this.updates, event);
       this.updates.clientExit(viewId, clientID);
     }
     this.updates.setVersion(viewId, clientID, version);
@@ -198,7 +199,7 @@ export class CodeMirrorView extends Croquet.View {
     this.done = false;
     this.pull();
     this.editor = this.view;
-    // console.log(getClientID(this.view.state));
+    console.log(getClientID(this.view.state));
   }
 
   viewConfig(extensions) {
@@ -235,22 +236,19 @@ export class CodeMirrorView extends Croquet.View {
     if (type === "pullUpdates") {
       const resolve = this.pullPromise;
       if (!resolve) {
-        console.log("probably this client went away")
+        // console.log("probably this client went away")
         return;
       }
       this.pullPromise = null;
       resolve(data);
     } else if (type === "ok") {
       const resolve = this.pushPromise;
+      if (!resolve) {
+        // console.log("probably this client went away");
+        return;
+      }
       this.pushPromise = null;
       resolve(true);
-    }
-  }
-
-  update(update) {
-    if (update.docChanged) {
-      // console.log("view update", this.view.dom.id, getSyncedVersion(this.view.state), update);
-      this.push();
     }
   }
 
@@ -289,10 +287,22 @@ export class CodeMirrorView extends Croquet.View {
     }
   }
 
+  detach() {
+    console.log("detach editor");
+    super.detach();
+  }
+
+  // update and destroy are the required methods for a CodeMirror plugin.
+  update(update) {
+    if (update.docChanged) {
+      // console.log("view update", this.view.dom.id, getSyncedVersion(this.view.state), update);
+      this.push();
+    }
+  }
+
   destroy() {
     this.publish(this.model.id, "collabMessage", {type: "destroy", clientID: this.clientID, viewId: this.viewId});
     this.done = true;
-    super.destroy();
   }
 
   static create(Renkon, model, extensions) {

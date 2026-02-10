@@ -51,6 +51,21 @@ class TopView extends Croquet.View {
     const changes = ChangeSet.of([{from: range.from, to: range.to, insert: text}], state.doc.length);
     view.dispatch({changes});
   }
+
+  detach() {
+    console.log("detach");
+    if (this.editor1) {
+      this.editor1.view.dom.remove();
+      this.editor1.destroy();
+      this.editor1 = null;
+    }
+    if (this.editor2) {
+      this.editor2.view.dom.remove();
+      this.editor2.destroy();
+      this.editor2 = null;
+    }
+    super.detach();
+  }
 }
 
 const appParameters = {
