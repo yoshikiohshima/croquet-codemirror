@@ -1,7 +1,7 @@
 import {CodeMirror} from "./renkon-codemirror.js";
 export {CodeMirror} from "./renkon-codemirror.js";
 
-const {ChangeSet, Text} = CodeMirror.state;
+const {ChangeSet, Text, StateEffect} = CodeMirror.state;
 const {receiveUpdates, rebaseUpdates, sendableUpdates, collab, getClientID, getSyncedVersion} = CodeMirror.collab;
 const {ViewPlugin} = CodeMirror.view;
 
@@ -208,9 +208,21 @@ export class CodeMirrorView extends Croquet.View {
   }
 
   viewConfig(extensions) {
+    const markRegion = StateEffect.define({
+      map({from, to}, changes) {
+        console.log("from, to", from, to);
+        from = changes.mapPos(from, 1);
+        to = changes.mapPos(to, -1);
+        return from < to ? {from, to} : undefined;
+      }
+    });
+    const sharedEffects = (tr) => {
+      console.log(tr);
+      return tr.effects.filter(e => e.is(markRegion));
+    };
     return {
       doc: this.model.doc.text || "",
-      extensions: [...extensions, collab({startVersion: this.model.updates.length}), ViewPlugin.define(_view => this)]
+      extensions: [...extensions, collab({startVersion: this.model.updates.length, sharedEffects}), ViewPlugin.define(_view => this)]
     }
   }
 
@@ -299,9 +311,10 @@ export class CodeMirrorView extends Croquet.View {
 
   // update and destroy are the required methods for a CodeMirror plugin.
   update(update) {
-    if (update.docChanged) {
+    if (update.docChanged || update.selectionSet) {
       // console.log("view update", this.view.dom.id, getSyncedVersion(this.view.state), update);
       this.push();
+      return;
     }
   }
 
