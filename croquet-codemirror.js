@@ -1,9 +1,95 @@
 import {CodeMirror} from "./renkon-codemirror.js";
 export {CodeMirror} from "./renkon-codemirror.js";
 
-const {ChangeSet, Text, StateEffect} = CodeMirror.state;
+const {ChangeSet, Text, StateEffect, StateField, EditorState, Transaction} = CodeMirror.state;
 const {receiveUpdates, rebaseUpdates, sendableUpdates, collab, getClientID, getSyncedVersion} = CodeMirror.collab;
-const {ViewPlugin} = CodeMirror.view;
+const {Decoration, EditorView, ViewPlugin} = CodeMirror.view;
+
+const sharedSelectionEffect = StateEffect.define({
+  map(value, changes) {
+    const ranges = value.ranges.map((range) => mapSelectionRange(range, changes));
+    return {clientID: value.clientID, ranges};
+  }
+});
+
+const remoteSelectionsField = StateField.define({
+  create() {
+    return new Map();
+  },
+  update(value, tr) {
+    let mapped = value;
+    if (tr.docChanged && value.size) {
+      const next = new Map();
+      for (const [clientID, ranges] of value.entries()) {
+        next.set(clientID, ranges.map((range) => mapSelectionRange(range, tr.changes)));
+      }
+      mapped = next;
+    }
+    for (const effect of tr.effects) {
+      if (effect.is(sharedSelectionEffect)) {
+        const {clientID, ranges} = effect.value;
+        const next = new Map(mapped);
+        if (!ranges || ranges.length === 0) {
+          next.delete(clientID);
+        } else {
+          next.set(clientID, ranges);
+        }
+        mapped = next;
+      }
+    }
+    debugger;
+    return mapped;
+  },
+  provide: (field) => EditorView.decorations.from(field, (value) => {
+    const decorations = [];
+    for (const ranges of value.values()) {
+      for (const range of ranges) {
+        const from = Math.min(range.anchor, range.head);
+        const to = Math.max(range.anchor, range.head);
+        if (from !== to) {
+          decorations.push(Decoration.mark({class: "cm-remoteSelection"}).range(from, to));
+        }
+      }
+    }
+    return Decoration.set(decorations, true);
+  })
+});
+
+const sharedSelectionExtender = EditorState.transactionExtender.of((tr) => {
+  if (!tr.selection) return null;
+  if (tr.annotation(Transaction.remote)) return null;
+  if (tr.effects.some((effect) => effect.is(sharedSelectionEffect))) return null;
+  const ranges = tr.selection.ranges.map((range) => ({
+    anchor: range.anchor,
+    head: range.head
+  }));
+  return {effects: sharedSelectionEffect.of({clientID: getClientID(tr.startState), ranges})};
+});
+
+function mapSelectionRange(range, changes) {
+  const forward = range.anchor <= range.head;
+  const anchor = changes.mapPos(range.anchor, forward ? 1 : -1);
+  const head = changes.mapPos(range.head, forward ? -1 : 1);
+  return {anchor, head};
+}
+
+function encodeEffects(effects) {
+  return effects.map((effect) => {
+    if (effect.is(sharedSelectionEffect)) {
+      return {type: "selection", value: effect.value};
+    }
+    return null;
+  }).filter(e => e);
+}
+
+function decodeEffects(effects) {
+  return effects.map((effect) => {
+    if (effect.type === "selection") {
+      return sharedSelectionEffect.of(effect.value);
+    }
+    return null;
+  }).filter(e => e);
+}
 
 class TextWrapper {
   constructor(text) {
@@ -111,6 +197,7 @@ export class CodeMirrorModel extends Croquet.Model {
           const array = obj.array.map(u => ({
             clientID: u.clientID,
             changes: u.changes.toJSON(),
+            effects: encodeEffects(u.effects || [])
           }));
           return {
             base: obj.base,
@@ -122,7 +209,8 @@ export class CodeMirrorModel extends Croquet.Model {
         read: (data) => {
           const array = data.array.map(u => ({
             changes: ChangeSet.fromJSON(u.changes),
-            clientID: u.clientID
+            clientID: u.clientID,
+            effects: decodeEffects(u.effects || [])
           }));
           return new UpdatesWrapper(data.base, array, data.versions, data.clientIDs);
         }
@@ -147,7 +235,8 @@ export class CodeMirrorModel extends Croquet.Model {
     } else if (type === "pushUpdates") {
       let received = updates.map(json => ({
         clientID: json.clientID,
-        changes: ChangeSet.fromJSON(json.changes)
+        changes: ChangeSet.fromJSON(json.changes),
+        effects: decodeEffects(json.effects || [])
       }));
 
       if (version !== this.updates.length) {
@@ -208,28 +297,20 @@ export class CodeMirrorView extends Croquet.View {
   }
 
   viewConfig(extensions) {
-    const markRegion = StateEffect.define({
-      map({from, to}, changes) {
-        console.log("from, to", from, to);
-        from = changes.mapPos(from, 1);
-        to = changes.mapPos(to, -1);
-        return from < to ? {from, to} : undefined;
-      }
-    });
     const sharedEffects = (tr) => {
-      console.log(tr);
-      return tr.effects.filter(e => e.is(markRegion));
+      return tr.effects.filter(e => e.is(sharedSelectionEffect));
     };
     return {
       doc: this.model.doc.text || "",
-      extensions: [...extensions, collab({startVersion: this.model.updates.length, sharedEffects}), ViewPlugin.define(_view => this)]
+      extensions: [...extensions, remoteSelectionsField, sharedSelectionExtender, collab({startVersion: this.model.updates.length, sharedEffects}), ViewPlugin.define(_view => this)]
     }
   }
 
   sendPushUpdates(version, fullUpdates) {
     let updates = fullUpdates.map(u => ({
       clientID: u.clientID,
-      changes: u.changes.toJSON()
+      changes: u.changes.toJSON(),
+      effects: encodeEffects(u.effects || [])
     }));
     // console.log("push", getClientID(this.view.state), version, updates);
     this.publish(this.model.id, "collabMessage", {type: "pushUpdates", version, clientID: this.clientID, updates, viewId: this.viewId});
@@ -304,6 +385,10 @@ export class CodeMirrorView extends Croquet.View {
     }
   }
 
+  getRemoteSelections() {
+    return this.view.state.field(remoteSelectionsField);
+  }
+
   detach() {
     console.log("detach editor");
     super.detach();
@@ -311,7 +396,11 @@ export class CodeMirrorView extends Croquet.View {
 
   // update and destroy are the required methods for a CodeMirror plugin.
   update(update) {
-    if (update.docChanged || update.selectionSet) {
+    const hasSharedSelectionEffect = update.transactions.some((tr) =>
+      tr.effects.some((effect) => effect.is(sharedSelectionEffect))
+    );
+
+    if (update.docChanged || hasSharedSelectionEffect) {
       // console.log("view update", this.view.dom.id, getSyncedVersion(this.view.state), update);
       this.push();
       return;
