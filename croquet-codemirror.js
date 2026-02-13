@@ -84,6 +84,7 @@ class UpdatesWrapper {
   viewExit(viewId) {
     const clientIDs = this.clientIDs.get(viewId);
     this.clientIDs.delete(viewId);
+    // console.log("viewExit", viewId);
     if (clientIDs === undefined) {return;}
     for (const clientID of clientIDs) {
       this.versions.delete(clientID);
@@ -136,13 +137,13 @@ export class CodeMirrorModel extends Croquet.Model {
             effects: encodeEffects(u.effects || [])
           });
           const array = obj.array.map(writer);
-          const lastUpdates = [...obj.lastUpdates.values()].map(writer)
+          const lastUpdates = [...obj.lastUpdates.values()].map(writer);
           return {
             base: obj.base,
             array,
             versions: obj.versions,
             clientIDs: obj.clientIDs,
-            lastUpdates
+            lastUpdates,
           };
         },
         read: (data) => {
@@ -219,6 +220,7 @@ export class CodeMirrorModel extends Croquet.Model {
       this.updates.clientExit(viewId, clientID);
     }
     this.updates.setVersion(viewId, clientID, version);
+    // window.model = this;
   }
 
   randomColor(viewId) {
@@ -232,6 +234,7 @@ export class CodeMirrorModel extends Croquet.Model {
   viewExit(viewId) {
     this.updates.viewExit(viewId);
     this.colors.delete(viewId);
+    this.publish(this.id, "updateSelections");
   }
 }
 
@@ -357,7 +360,6 @@ export class CodeMirrorView extends Croquet.View {
   constructor(model, extensions) {
     super(model);
     this.model = model;
-    this.subscribe(this.model.id, "collabUpdate", this.collabUpdate);
     const config = this.viewConfig(extensions || []);
     this.view = new CodeMirror.EditorView(config);
     this.clientID = getClientID(this.view.state);
@@ -367,22 +369,29 @@ export class CodeMirrorView extends Croquet.View {
     this.done = false;
     this.pull();
     this.editor = this.view;
+    this.subscribe(this.model.id, "collabUpdate", this.collabUpdate);
+    this.subscribe(this.model.id, "updateSelections", this.applyLastUpdates);
   }
 
   applyLastUpdates() {
     const lastUpdates = this.getLastUpdates();
-    if (!lastUpdates || lastUpdates.size === 0) {
-      return;
+    const effects = [];
+    const existingSelections = this.view.state.field(remoteSelectionsField);
+    if (existingSelections.size) {
+      for (const key of existingSelections.keys()) {
+        effects.push(sharedSelectionEffect.of({clientID: key, viewId: key, ranges: []}));
+      }
     }
 
-    const effects = [];
-    for (const update of lastUpdates.values()) {
-      if (!update.effects || update.clientID === this.clientID) {
-        continue;
-      }
-      for (const effect of update.effects) {
-        if (effect.is(sharedSelectionEffect)) {
-          effects.push(effect);
+    if (lastUpdates && lastUpdates.size) {
+      for (const update of lastUpdates.values()) {
+        if (!update.effects || update.clientID === this.clientID) {
+          continue;
+        }
+        for (const effect of update.effects) {
+          if (effect.is(sharedSelectionEffect)) {
+            effects.push(effect);
+          }
         }
       }
     }
