@@ -360,12 +360,35 @@ export class CodeMirrorView extends Croquet.View {
     const config = this.viewConfig(extensions || []);
     this.view = new CodeMirror.EditorView(config);
     this.clientID = getClientID(this.view.state);
+    this.applyLastUpdates();
     this.pullPromise = null;
     this.pushPromise = null;
     this.done = false;
     this.pull();
     this.editor = this.view;
-    console.log(this.getLastUpdates());
+  }
+
+  applyLastUpdates() {
+    const lastUpdates = this.getLastUpdates();
+    if (!lastUpdates || lastUpdates.size === 0) {
+      return;
+    }
+
+    const effects = [];
+    for (const update of lastUpdates.values()) {
+      if (!update.effects || update.clientID === this.clientID) {
+        continue;
+      }
+      for (const effect of update.effects) {
+        if (effect.is(sharedSelectionEffect)) {
+          effects.push(effect);
+        }
+      }
+    }
+
+    if (effects.length) {
+      this.view.dispatch({effects, annotations: [Transaction.remote.of(true)]});
+    }
   }
 
   viewConfig(extensions) {

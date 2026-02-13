@@ -1,0 +1,97 @@
+:root {
+  --note-yellow: #f5e25c;
+  --note-shadow: rgba(36, 33, 18, 0.25);
+  --note-tape: rgba(255, 255, 255, 0.55);
+  --note-blue: #7fb2d1;
+  --note-ink: #1d1d1d;
+}
+
+#e1,
+#e2 {
+  position: relative;
+  width: 343px;
+  height: 291px;
+  background: var(--note-yellow);
+  border-radius: 12px;
+  box-shadow: 0 6px 14px var(--note-shadow);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+}
+
+#e1::before,
+#e2::before {
+  content: "";
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 70px;
+  height: 28px;
+  background: var(--note-tape);
+  border-radius: 6px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.12);
+}
+
+#e1::after,
+#e2::after {
+  content: "\00d7";
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--note-ink);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+#e1 .cm-scroller,
+#e2 .cm-scroller {
+  position: relative;
+  background: transparent;
+}
+
+#e1 .cm-scroller::after,
+#e2 .cm-scroller::after {
+  content: "";
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  right: 10px;
+  bottom: 10px;
+  background: var(--note-blue);
+  border-radius: 4px;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.12);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+#e1 .cm-content,
+#e2 .cm-content {
+  padding: 22px 20px 26px 18px;
+  font-family: "Bradley Hand", "Comic Sans MS", "Segoe Print", "Marker Felt", cursive;
+  font-size: 18px;
+  color: var(--note-ink);
+}
+
+#e1 .cm-line,
+#e2 .cm-line {
+  line-height: 1.35;
+}
+
+#e1 .cm-gutters,
+#e2 .cm-gutters {
+  display: none;
+}
+
+.cm-remoteSelection {
+  background-color: rgba(80, 140, 220, 0.35);
+}
+
+.cm-remoteCursor {
+  display: inline-block;
+  border-left: 2px solid rgba(80, 140, 220, 0.9);
+  margin-left: -1px;
+  height: 1.2em;
+  vertical-align: text-bottom;
+}
