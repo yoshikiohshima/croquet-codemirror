@@ -3,7 +3,7 @@ export {CodeMirror} from "./renkon-codemirror.js";
 
 const {ChangeSet, Text, StateEffect, StateField, EditorState, Transaction, Facet} = CodeMirror.state;
 const {receiveUpdates, rebaseUpdates, sendableUpdates, collab, getClientID, getSyncedVersion} = CodeMirror.collab;
-const {Decoration, EditorView, ViewPlugin} = CodeMirror.view;
+const {Decoration, EditorView, ViewPlugin, WidgetType} = CodeMirror.view;
 
 const viewIdFacet = Facet.define({
   combine(values) {
@@ -73,6 +73,26 @@ function mapSelectionRange(range, changes) {
   return {anchor, head};
 }
 
+class RemoteCursorWidget extends WidgetType {
+  constructor(color) {
+    super();
+    this.color = color;
+  }
+
+  eq(other) {
+    return other.color === this.color;
+  }
+
+  toDOM() {
+    const dom = document.createElement("span");
+    dom.className = "cm-remoteCursor";
+    if (this.color) {
+      dom.style.borderColor = this.color;
+    }
+    return dom;
+  }
+}
+
 const remoteSelectionsDecorations = EditorView.decorations.compute(
   [remoteSelectionsField],
   (state) => {
@@ -90,6 +110,8 @@ const remoteSelectionsDecorations = EditorView.decorations.compute(
             ? {class: "cm-remoteSelection", attributes: {style: `background-color: ${color};`}}
             : {class: "cm-remoteSelection"};
           decorations.push(Decoration.mark(spec).range(from, to));
+        } else {
+          decorations.push(Decoration.widget({widget: new RemoteCursorWidget(color), side: 1}).range(from));
         }
       }
     }
