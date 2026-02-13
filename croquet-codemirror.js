@@ -1,14 +1,26 @@
 import {CodeMirror} from "./renkon-codemirror.js";
 export {CodeMirror} from "./renkon-codemirror.js";
 
-const {ChangeSet, Text, StateEffect, StateField, EditorState, Transaction} = CodeMirror.state;
+const {ChangeSet, Text, StateEffect, StateField, EditorState, Transaction, Facet} = CodeMirror.state;
 const {receiveUpdates, rebaseUpdates, sendableUpdates, collab, getClientID, getSyncedVersion} = CodeMirror.collab;
 const {Decoration, EditorView, ViewPlugin} = CodeMirror.view;
+
+const viewIdFacet = Facet.define({
+  combine(values) {
+    return values.length ? values[0] : null;
+  }
+});
+
+const colorLookupFacet = Facet.define({
+  combine(values) {
+    return values.length ? values[0] : () => null;
+  }
+});
 
 const sharedSelectionEffect = StateEffect.define({
   map(value, changes) {
     const ranges = value.ranges.map((range) => mapSelectionRange(range, changes));
-    return {clientID: value.clientID, ranges};
+    return {clientID: value.clientID, viewId: value.viewId, ranges};
   }
 });
 
@@ -20,39 +32,26 @@ const remoteSelectionsField = StateField.define({
     let mapped = value;
     if (tr.docChanged && value.size) {
       const next = new Map();
-      for (const [clientID, ranges] of value.entries()) {
-        next.set(clientID, ranges.map((range) => mapSelectionRange(range, tr.changes)));
+      for (const [key, ranges] of value.entries()) {
+        next.set(key, ranges.map((range) => mapSelectionRange(range, tr.changes)));
       }
       mapped = next;
     }
     for (const effect of tr.effects) {
       if (effect.is(sharedSelectionEffect)) {
-        const {clientID, ranges} = effect.value;
+        const {viewId, clientID, ranges} = effect.value;
+        const key = viewId || clientID;
         const next = new Map(mapped);
         if (!ranges || ranges.length === 0) {
-          next.delete(clientID);
+          next.delete(key);
         } else {
-          next.set(clientID, ranges);
+          next.set(key, ranges);
         }
         mapped = next;
       }
     }
-    debugger;
     return mapped;
-  },
-  provide: (field) => EditorView.decorations.from(field, (value) => {
-    const decorations = [];
-    for (const ranges of value.values()) {
-      for (const range of ranges) {
-        const from = Math.min(range.anchor, range.head);
-        const to = Math.max(range.anchor, range.head);
-        if (from !== to) {
-          decorations.push(Decoration.mark({class: "cm-remoteSelection"}).range(from, to));
-        }
-      }
-    }
-    return Decoration.set(decorations, true);
-  })
+  }
 });
 
 const sharedSelectionExtender = EditorState.transactionExtender.of((tr) => {
@@ -63,7 +62,8 @@ const sharedSelectionExtender = EditorState.transactionExtender.of((tr) => {
     anchor: range.anchor,
     head: range.head
   }));
-  return {effects: sharedSelectionEffect.of({clientID: getClientID(tr.startState), ranges})};
+  const viewId = tr.startState.facet(viewIdFacet);
+  return {effects: sharedSelectionEffect.of({clientID: getClientID(tr.startState), viewId, ranges})};
 });
 
 function mapSelectionRange(range, changes) {
@@ -72,6 +72,31 @@ function mapSelectionRange(range, changes) {
   const head = changes.mapPos(range.head, forward ? -1 : 1);
   return {anchor, head};
 }
+
+const remoteSelectionsDecorations = EditorView.decorations.compute(
+  [remoteSelectionsField],
+  (state) => {
+    const selections = state.field(remoteSelectionsField);
+    const colorLookup = state.facet(colorLookupFacet);
+    const decorations = [];
+
+    for (const [viewId, ranges] of selections.entries()) {
+      const color = colorLookup(viewId);
+      for (const range of ranges) {
+        const from = Math.min(range.anchor, range.head);
+        const to = Math.max(range.anchor, range.head);
+        if (from !== to) {
+          const spec = color
+            ? {class: "cm-remoteSelection", attributes: {style: `background-color: ${color};`}}
+            : {class: "cm-remoteSelection"};
+          decorations.push(Decoration.mark(spec).range(from, to));
+        }
+      }
+    }
+
+    return Decoration.set(decorations, true);
+  }
+);
 
 function encodeEffects(effects) {
   return effects.map((effect) => {
@@ -176,6 +201,7 @@ export class CodeMirrorModel extends Croquet.Model {
     this.doc = new TextWrapper(Text.of(doc));
     this.updates = new UpdatesWrapper(0, []);
     this.pending = [];
+    this.colors = new Map() // viewId => css color string
     this.subscribe(this.id, "collabMessage", this.collabMessage);
     this.subscribe(this.sessionId, "view-exit", this.viewExit);
   }
@@ -226,6 +252,9 @@ export class CodeMirrorModel extends Croquet.Model {
     // acts on it.
     const {type, version, updates, clientID, viewId} = event;
     // console.log("model", event);
+    if (!this.colors.get(viewId)) {
+      this.colors.set(viewId, this.randomColor(viewId));
+    }
     if (type === "pullUpdates") {
       if (version < this.updates.length) {
         this.publish(this.id, "collabUpdate", {clientIDs: [clientID], type: "pullUpdates", start: version, end: this.updates.length});
@@ -273,8 +302,16 @@ export class CodeMirrorModel extends Croquet.Model {
     this.updates.setVersion(viewId, clientID, version);
   }
 
+  randomColor(viewId) {
+    let h = Math.floor(parseInt(viewId, 36) / (36 ** 10) * 360);
+    let s = "40%";
+    let l = "40%";
+    return `hsl(${h}, ${s}, ${l})`;
+  }
+
   viewExit(viewId) {
     this.updates.viewExit(viewId);
+    this.colors.delete(viewId);
   }
 }
 
@@ -302,7 +339,16 @@ export class CodeMirrorView extends Croquet.View {
     };
     return {
       doc: this.model.doc.text || "",
-      extensions: [...extensions, remoteSelectionsField, sharedSelectionExtender, collab({startVersion: this.model.updates.length, sharedEffects}), ViewPlugin.define(_view => this)]
+      extensions: [
+        ...extensions,
+        viewIdFacet.of(this.viewId),
+        colorLookupFacet.of((viewId) => this.model.colors.get(viewId)),
+        remoteSelectionsField,
+        remoteSelectionsDecorations,
+        sharedSelectionExtender,
+        collab({startVersion: this.model.updates.length, sharedEffects}),
+        ViewPlugin.define(_view => this)
+      ]
     }
   }
 
