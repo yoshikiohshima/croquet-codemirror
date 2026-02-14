@@ -23,6 +23,24 @@ function decodeEffects(effects) {
   }).filter(e => e);
 }
 
+function encodeUpdates(updates) {
+  const writer = u => ({
+    clientID: u.clientID,
+    changes: u.changes.toJSON(),
+    effects: encodeEffects(u.effects || [])
+  });
+  return updates.map(writer);
+}
+
+function decodeUpdates(updates) {
+  const reader = u => ({
+    changes: ChangeSet.fromJSON(u.changes),
+    clientID: u.clientID,
+    effects: decodeEffects(u.effects || []),
+  });
+  return updates.map(reader);
+}
+
 class TextWrapper {
   constructor(text) {
     this.text = text;
@@ -44,18 +62,19 @@ class UpdatesWrapper {
 
   at(index) {
     const realIndex = index - this.base;
-    return this.array[realIndex];
+    return decodeUpdates([this.array[realIndex]])[0];
   }
 
   slice(from, to) {
     const realFrom = from - this.base;
     const realTo = to === undefined ? undefined : to - this.base;
-    return this.array.slice(realFrom, realTo);
+    const slice = this.array.slice(realFrom, realTo);
+    return decodeUpdates(slice);
   }
 
-  push(obj) {
-    this.lastUpdates.set(obj.clientID, obj);
-    this.array.push(obj);
+  push(update) {
+    this.lastUpdates.set(update.clientID, update);
+    this.array.push(update);
   }
 
   setLowest() {
@@ -131,34 +150,10 @@ export class CodeMirrorModel extends Croquet.Model {
       UpdatesWrapper: {
         cls: UpdatesWrapper,
         write: (obj) => {
-          const writer = u => ({
-            clientID: u.clientID,
-            changes: u.changes.toJSON(),
-            effects: encodeEffects(u.effects || [])
-          });
-          const array = obj.array.map(writer);
-          const lastUpdates = [...obj.lastUpdates.values()].map(writer);
-          return {
-            base: obj.base,
-            array,
-            versions: obj.versions,
-            clientIDs: obj.clientIDs,
-            lastUpdates,
-          };
+          return {...obj};
         },
         read: (data) => {
-          const reader = u => ({
-            changes: ChangeSet.fromJSON(u.changes),
-            clientID: u.clientID,
-            effects: decodeEffects(u.effects || []),
-          });
-          const array = data.array.map(reader);
-          const mapped = data.lastUpdates.map((u) => {
-            const read = reader(u);
-            return [read.clientID, read]
-          });
-          const lastUpdates = new Map(mapped);
-          return new UpdatesWrapper(data.base, array, data.versions, data.clientIDs, lastUpdates);
+          return new UpdatesWrapper(data.base, data.array, data.versions, data.clientIDs, data.lastUpdates);
         }
       }
     }
@@ -182,36 +177,25 @@ export class CodeMirrorModel extends Croquet.Model {
         this.pending.push(event.clientID);
       }
     } else if (type === "pushUpdates") {
-      let received = updates.map(json => ({
-        clientID: json.clientID,
-        changes: ChangeSet.fromJSON(json.changes),
-        effects: decodeEffects(json.effects || [])
-      }));
-
+      let received = updates;
+      let decoded = decodeUpdates(received);
       if (version !== this.updates.length) {
-        received = rebaseUpdates(received, this.updates.slice(version));
+        decoded = rebaseUpdates(decoded, this.updates.slice(version));
+        received = encodeUpdates(decoded);
       }
 
       const pendingStart = this.updates.length;
 
-      for (let update of received) {
-        this.updates.push(update);
-        this.doc = new TextWrapper(update.changes.apply(this.doc.text));
+      for (let i = 0; i < decoded.length; i++) {
+        this.updates.push(received[i]);
+        this.doc = new TextWrapper(decoded[i].changes.apply(this.doc.text));
       }
       const pendingEnd = this.updates.length;
       this.publish(this.id, "collabUpdate", {clientIDs: [clientID], type: "ok"});
       if (received.length > 0) {
-        // let json = received.map(update => ({
-        // clientID: update.clientID,
-        // changes: update.changes.toJSON()
-        // }));
         const pending = this.pending;
         this.pending = [];
         this.publish(this.id, "collabUpdate", {clientIDs: pending, type: "pullUpdates", start: pendingStart, end: pendingEnd});
-        //while (this.pending.length > 0) {
-        // const sendTo = this.pending.pop();
-        // this.publish(this.id, "collabUpdate", {clientID: sendTo, type: "pullUpdates", start: pendingStart, end: pendingEnd});
-        //}
       }
     } else if (type === "getDocument") {
       this.publish(this.id, "collabUpdate", {type: "getDocument"});
@@ -374,24 +358,20 @@ export class CodeMirrorView extends Croquet.View {
   }
 
   applyLastUpdates() {
-    const lastUpdates = this.getLastUpdates();
+    const lastUpdates = [...decodeUpdates(this.getLastUpdates().values())];
     const effects = [];
     const existingSelections = this.view.state.field(remoteSelectionsField);
-    if (existingSelections.size) {
-      for (const key of existingSelections.keys()) {
-        effects.push(sharedSelectionEffect.of({clientID: key, viewId: key, ranges: []}));
-      }
+    for (const key of existingSelections.keys()) {
+      effects.push(sharedSelectionEffect.of({clientID: key, viewId: key, ranges: []}));
     }
 
-    if (lastUpdates && lastUpdates.size) {
-      for (const update of lastUpdates.values()) {
-        if (!update.effects || update.clientID === this.clientID) {
-          continue;
-        }
-        for (const effect of update.effects) {
-          if (effect.is(sharedSelectionEffect)) {
-            effects.push(effect);
-          }
+    for (const update of lastUpdates) {
+      if (!update.effects || update.clientID === this.clientID) {
+        continue;
+      }
+      for (const effect of update.effects) {
+        if (effect.is(sharedSelectionEffect)) {
+          effects.push(effect);
         }
       }
     }
@@ -421,12 +401,7 @@ export class CodeMirrorView extends Croquet.View {
   }
 
   sendPushUpdates(version, fullUpdates) {
-    let updates = fullUpdates.map(u => ({
-      clientID: u.clientID,
-      changes: u.changes.toJSON(),
-      effects: encodeEffects(u.effects || [])
-    }));
-    // console.log("push", getClientID(this.view.state), version, updates);
+    let updates = encodeUpdates(fullUpdates);
     this.publish(this.model.id, "collabMessage", {type: "pushUpdates", version, clientID: this.clientID, updates, viewId: this.viewId});
     return new Promise((resolve) => {
       this.pushPromise = resolve;
